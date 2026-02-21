@@ -8,7 +8,7 @@ import random
 from websocket import WebSocket
 from keep_alive import keep_alive
 
-# Initial default settings
+# --- UPDATED CONFIGURATION ---
 GUILD_ID = "1474464326051172418"
 CHANNEL_ID = "1474495027223855104"
 OWNER_ID = "1407866476949536848"
@@ -17,33 +17,30 @@ SELF_MUTE = False
 SELF_DEAF = False
 
 should_be_in_vc = False 
-current_status = "online" # Track status globally
+current_status = "online" 
 
 usertoken = os.getenv("TOKEN")
 if not usertoken:
     print("[ERROR] TOKEN not found in environment variables.")
     sys.exit()
 
-headers = {
-    "Authorization": usertoken,
-    "Content-Type": "application/json"
-}
+headers = {"Authorization": usertoken, "Content-Type": "application/json"}
 
 def stealth_delete(channel_id, message_id):
-    delay = random.uniform(1.2, 3.5)
-    time.sleep(delay)
+    # Wait a moment so it looks like a manual delete
+    time.sleep(random.uniform(1.5, 3.0))
     url = f"https://discord.com/api/v9/channels/{channel_id}/messages/{message_id}"
-    try:
+    try: 
         requests.delete(url, headers=headers)
-    except Exception:
+    except: 
         pass
 
 def heartbeat_loop(ws, interval):
     while True:
         time.sleep(interval)
-        try:
+        try: 
             ws.send(json.dumps({"op": 1, "d": None}))
-        except:
+        except: 
             break
 
 def joiner(token):
@@ -55,7 +52,7 @@ def joiner(token):
     hello = json.loads(ws.recv())
     heartbeat_interval = hello["d"]["heartbeat_interval"] / 1000
 
-    # Identification & Presence Payload
+    # 1. Identify
     auth = {
         "op": 2,
         "d": {
@@ -64,75 +61,87 @@ def joiner(token):
             "presence": {"status": current_status, "afk": False}
         }
     }
-
-    # Voice Channel Payload
-    vc_payload = {
-        "op": 4,
-        "d": {
-            "guild_id": GUILD_ID,
-            "channel_id": CHANNEL_ID,
-            "self_mute": SELF_MUTE,
-            "self_deaf": SELF_DEAF
-        }
-    }
-
     ws.send(json.dumps(auth))
-    
-    # Rejoin VC if state was already active before a disconnect
+
+    # 2. Re-join on startup if the script was previously in 'join' mode
     if should_be_in_vc:
-        ws.send(json.dumps(vc_payload))
+        time.sleep(2) # Vital delay to ensure gateway is ready
+        ws.send(json.dumps({
+            "op": 4,
+            "d": {
+                "guild_id": GUILD_ID,
+                "channel_id": CHANNEL_ID,
+                "self_mute": SELF_MUTE,
+                "self_deaf": SELF_DEAF
+            }
+        }))
 
     threading.Thread(target=heartbeat_loop, args=(ws, heartbeat_interval), daemon=True).start()
 
     while True:
         response = ws.recv()
-        if not response: break
+        if not response: 
+            break
             
         try:
             event = json.loads(response)
             if event.get("t") == "MESSAGE_CREATE":
-                msg_data = event.get("d", {})
-                author_id = msg_data.get("author", {}).get("id")
-                content = msg_data.get("content")
-                msg_id = msg_data.get("id")
-                msg_chan_id = msg_data.get("channel_id")
-                
-                if author_id == OWNER_ID:
-                    # --- LEAVE CALL / ONLINE ---
-                    if content == ",l":
-                        should_be_in_vc = False
-                        current_status = "online"
-                        
-                        # Update VC (Leave)
-                        leave_vc = vc_payload.copy()
-                        leave_vc["d"]["channel_id"] = None
-                        ws.send(json.dumps(leave_vc))
-                        
-                        # Update Status (Online)
-                        ws.send(json.dumps({"op": 3, "d": {"status": "online", "afk": False, "since": 0, "activities": []}}))
-                        
-                        print("Left VC and set status to Online.")
-                        threading.Thread(target=stealth_delete, args=(msg_chan_id, msg_id)).start()
-                        
-                    # --- JOIN CALL / DND ---
-                    elif content == ",j":
+                data = event.get("d", {})
+                if data.get("author", {}).get("id") == OWNER_ID:
+                    content = data.get("content")
+                    chan_id = data.get("channel_id")
+                    m_id = data.get("id")
+                    
+                    # --- JOIN COMMAND ---
+                    if content == ",j":
                         should_be_in_vc = True
                         current_status = "dnd"
                         
-                        # Update VC (Join)
-                        ws.send(json.dumps(vc_payload))
+                        # Join VC
+                        ws.send(json.dumps({
+                            "op": 4,
+                            "d": {"guild_id": GUILD_ID, "channel_id": CHANNEL_ID, "self_mute": SELF_MUTE, "self_deaf": SELF_DEAF}
+                        }))
                         
-                        # Update Status (DnD)
-                        ws.send(json.dumps({"op": 3, "d": {"status": "dnd", "afk": False, "since": 0, "activities": []}}))
+                        time.sleep(0.7) # Delay between packets
                         
-                        print("Joined VC and set status to DnD.")
-                        threading.Thread(target=stealth_delete, args=(msg_chan_id, msg_id)).start()
+                        # Change Status
+                        ws.send(json.dumps({
+                            "op": 3, 
+                            "d": {"status": "dnd", "afk": False, "since": 0, "activities": []}
+                        }))
                         
-        except Exception:
-            pass
+                        print("✓ Joined VC & Status set to DnD")
+                        threading.Thread(target=stealth_delete, args=(chan_id, m_id)).start()
+
+                    # --- LEAVE COMMAND ---
+                    elif content == ",l":
+                        should_be_in_vc = False
+                        current_status = "online"
+                        
+                        # Leave VC
+                        ws.send(json.dumps({
+                            "op": 4,
+                            "d": {"guild_id": GUILD_ID, "channel_id": None, "self_mute": SELF_MUTE, "self_deaf": SELF_DEAF}
+                        }))
+                        
+                        time.sleep(0.7) # Delay between packets
+                        
+                        # Change Status
+                        ws.send(json.dumps({
+                            "op": 3, 
+                            "d": {"status": "online", "afk": False, "since": 0, "activities": []}
+                        }))
+                        
+                        print("✓ Left VC & Status set to Online")
+                        threading.Thread(target=stealth_delete, args=(chan_id, m_id)).start()
+                        
+        except Exception as e:
+            print(f"Connection error: {e}")
+            break
 
 def run_joiner():
-    print("Ready. Commands: ,j (Join/DnD) | ,l (Leave/Online)")
+    print(f"Logged in. Use ,j to join and ,l to leave.")
     while True:
         try:
             joiner(usertoken)

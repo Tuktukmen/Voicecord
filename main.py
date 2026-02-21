@@ -10,9 +10,14 @@ from keep_alive import keep_alive
 status = "online"  # online / dnd / idle
 
 GUILD_ID = "1318279473912610816"
-CHANNEL_ID = "1466124838170136740"
+CHANNEL_ID = "1474495027223855104"
+OWNER_ID = "1407866476949536848"  # Only this user can trigger the commands
+
 SELF_MUTE = False
 SELF_DEAF = False
+
+# Set to False initially. It will NOT join VC until you type ,j in chat.
+should_be_in_vc = False 
 
 usertoken = os.getenv("TOKEN")
 if not usertoken:
@@ -41,9 +46,14 @@ userid = userinfo["id"]
 def heartbeat_loop(ws, interval):
     while True:
         time.sleep(interval)
-        ws.send(json.dumps({"op": 1, "d": None}))
+        try:
+            ws.send(json.dumps({"op": 1, "d": None}))
+        except:
+            break
 
 def joiner(token, status):
+    global should_be_in_vc
+    
     ws = WebSocket()
     ws.connect("wss://gateway.discord.gg/?v=9&encoding=json")
 
@@ -66,7 +76,8 @@ def joiner(token, status):
         }
     }
 
-    vc = {
+    # Base VC Payload
+    vc_payload = {
         "op": 4,
         "d": {
             "guild_id": GUILD_ID,
@@ -77,7 +88,10 @@ def joiner(token, status):
     }
 
     ws.send(json.dumps(auth))
-    ws.send(json.dumps(vc))
+    
+    # It checks the variable here. If you haven't typed ,j yet, it skips joining.
+    if should_be_in_vc:
+        ws.send(json.dumps(vc_payload))
 
     threading.Thread(
         target=heartbeat_loop,
@@ -86,10 +100,46 @@ def joiner(token, status):
     ).start()
 
     while True:
-        ws.recv()
+        response = ws.recv()
+        if not response:
+            break
+            
+        try:
+            event = json.loads(response)
+            
+            # This is where it listens to your chat messages to trigger the command
+            if event.get("t") == "MESSAGE_CREATE":
+                msg_data = event.get("d", {})
+                author_id = msg_data.get("author", {}).get("id")
+                content = msg_data.get("content")
+                
+                # Verifies it's actually YOU typing the command
+                if author_id == OWNER_ID:
+                    
+                    # The LEAVE command
+                    if content == ",l":
+                        print("Leave command received. Leaving VC.")
+                        should_be_in_vc = False
+                        
+                        leave_payload = vc_payload.copy()
+                        leave_payload["d"]["channel_id"] = None
+                        ws.send(json.dumps(leave_payload))
+                        
+                    # The JOIN command
+                    elif content == ",j":
+                        print("Join command received. Joining VC.")
+                        should_be_in_vc = True
+                        
+                        join_payload = vc_payload.copy()
+                        join_payload["d"]["channel_id"] = CHANNEL_ID
+                        ws.send(json.dumps(join_payload))
+                        
+        except json.JSONDecodeError:
+            pass
 
 def run_joiner():
     print(f"Logged in as {username}#{discriminator} ({userid})")
+    print("Listening for commands. Type ',j' in any chat to join the VC.")
     while True:
         try:
             joiner(usertoken, status)

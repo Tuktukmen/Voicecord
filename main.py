@@ -11,7 +11,7 @@ from keep_alive import keep_alive
 
 # --- CONFIGURATION ---
 TARGET_GUILD_ID = "1474464326051172418" # The only server where commands will work
-TARGET_CHANNEL_ID = "1474495027223855104" # The VC to join
+TARGET_CHANNEL_ID = "1474626965318275092" # The VC to join
 OWNER_ID = "1407866476949536848"
 
 should_be_in_vc = False 
